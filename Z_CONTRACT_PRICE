@@ -1,0 +1,265 @@
+
+#FM-1
+FUNCTION zcomv_contract_price_check .
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(IN_VBAK) TYPE  VBAK OPTIONAL
+*"     REFERENCE(IN_VBAP) TYPE  VBAP OPTIONAL
+*"     REFERENCE(IN_VBKD) TYPE  VBKD OPTIONAL
+*"     REFERENCE(IN_VBEP) TYPE  VBEP OPTIONAL
+*"     REFERENCE(IN_VBUK) TYPE  VBUK OPTIONAL
+*"     REFERENCE(IN_VBUP) TYPE  VBUP OPTIONAL
+*"     REFERENCE(IN_YVBAK) TYPE  VBAK OPTIONAL
+*"     REFERENCE(IN_XVBAP) TYPE  VBAPVB OPTIONAL
+*"     REFERENCE(IN_T180) TYPE  T180 OPTIONAL
+*"     REFERENCE(IN_XKOMV) TYPE  VA_KOMV_T OPTIONAL
+*"  EXPORTING
+*"     REFERENCE(OUT_VBAK) TYPE  VBAK
+*"     REFERENCE(OUT_VBAP) TYPE  VBAP
+*"     REFERENCE(OUT_VBKD) TYPE  VBKD
+*"     REFERENCE(OUT_VBEP) TYPE  VBEP
+*"     REFERENCE(OUT_VBUK) TYPE  VBUK
+*"     REFERENCE(OUT_VBUP) TYPE  VBUP
+*"     REFERENCE(OUT_YVBAK) TYPE  VBAK
+*"     REFERENCE(OUT_XVBAP) TYPE  VBAPVB
+*"  TABLES
+*"      T_XVBAP STRUCTURE  VBAPVB OPTIONAL
+*"      T_XVBFA STRUCTURE  VBFAVB OPTIONAL
+*"      T_XVBKD STRUCTURE  VBKDVB OPTIONAL
+*"      T_XVBEP STRUCTURE  VBEPVB OPTIONAL
+*"      T_XVBUK STRUCTURE  VBUKVB OPTIONAL
+*"      T_XVBUP STRUCTURE  VBUPVB OPTIONAL
+*"      T_XVBPA STRUCTURE  VBPAVB OPTIONAL
+*"      T_YVBAP STRUCTURE  VBAPVB OPTIONAL
+*"      T_YVBFA STRUCTURE  VBFAVB OPTIONAL
+*"      T_YVBKD STRUCTURE  VBKDVB OPTIONAL
+*"      T_YVBEP STRUCTURE  VBEPVB OPTIONAL
+*"      T_YVBUK STRUCTURE  VBUKVB OPTIONAL
+*"      T_YVBUP STRUCTURE  VBUPVB OPTIONAL
+*"      T_CVBAP STRUCTURE  VBAPVB OPTIONAL
+*"      T_CVBFA STRUCTURE  VBFAVB OPTIONAL
+*"      T_CVBKD STRUCTURE  VBKDVB OPTIONAL
+*"      T_CVBEP STRUCTURE  VBEPVB OPTIONAL
+*"      T_CVBUP STRUCTURE  VBUPVB OPTIONAL
+*"      T_VVBAP STRUCTURE  VBAPVB OPTIONAL
+*"----------------------------------------------------------------------
+* FS ID: ZFSE-00064251                                                 *
+* DD ID: ZDDE-00064252                                                 *
+*----------------------------------------------------------------------*
+* Title: Show error message while saving the sales order if contract   *
+* price is not found                                                   *
+* Userexit: USEREXIT_DOCUMENT_SAVE_PREPARE                             *
+* Include : ZCOMV_MV45AFZZ_UX_SAVE_PREPARE                             *
+*----------------------------------------------------------------------*
+* Change Log:                                                          *
+* ---------------------------------------------------------------------*
+* Who      |    NAME   |  Date       |    CR       |      Text         *
+* AMIREHA1   A.Harshitha  18.Feb.2025   1100250995  Initial Development*
+*----------------------------------------------------------------------*
+
+  CONSTANTS: lc_repid TYPE progname VALUE 'ZCOMV_CONTRACT_PRICE_CHECK',
+             lc_kschl TYPE zconst   VALUE 'KSCHL',
+             lc_vkaus TYPE zconst   VALUE 'VKAUS',
+             lc_i     TYPE char1    VALUE 'I',
+             lc_eq    TYPE char2    VALUE 'EQ'.
+
+  DATA: lr_vkaus TYPE RANGE OF vkaus,
+        lv_kschl TYPE kschl.
+
+*Fetch constants
+  SELECT const, value
+    FROM zconstants
+    INTO TABLE @DATA(lt_constants)
+    WHERE repid = @lc_repid.
+  IF sy-subrc EQ 0.
+    LOOP AT lt_constants ASSIGNING FIELD-SYMBOL(<lfs_const>).
+      CASE <lfs_const>-const.
+        WHEN lc_vkaus.
+          APPEND VALUE #( sign = lc_i option = lc_eq low = <lfs_const>-value ) TO lr_vkaus.
+        WHEN lc_kschl.
+          lv_kschl = <lfs_const>-value.     "Only 1 KSCHL value will be maintained
+      ENDCASE.
+    ENDLOOP.
+*Check the items for the condition type.
+    LOOP AT t_xvbap ASSIGNING FIELD-SYMBOL(<lfs_xvbap>).
+      IF <lfs_xvbap>-vkaus IN lr_vkaus.
+        DATA(ls_xkomv) = VALUE #( in_xkomv[ kposn = <lfs_xvbap>-posnr kschl = lv_kschl ] OPTIONAL ).
+        IF ( ls_xkomv IS NOT INITIAL AND ls_xkomv-kbetr EQ 0 ).
+          MESSAGE e000(zfse_00064251) WITH <lfs_xvbap>-posnr.
+        ENDIF.
+        CLEAR ls_xkomv.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+#FM-2
+FUNCTION zcomv_contract_price_rv64a924.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(IS_KOMK) TYPE  KOMK OPTIONAL
+*"     REFERENCE(IS_KOMP) TYPE  KOMP OPTIONAL
+*"  TABLES
+*"      T_KOMV STRUCTURE  KOMV
+*"  CHANGING
+*"     REFERENCE(C_XKWERT) TYPE  KWERT OPTIONAL
+*"----------------------------------------------------------------------
+*"----------------------------------------------------------------------
+* FS ID: ZFSE-00064251                                                 *
+* DD ID: ZDDE-00064252                                                 *
+*----------------------------------------------------------------------*
+* Title: Modification of price change due to mandatory changes         *
+* Description : This FM is called from 924 routine where it updates    *
+* Contract price(ZP25) and Contract number for SO                      *
+* Include : ZCOMV_RV64A924                                             *
+* Routine : 924                                                        *
+*----------------------------------------------------------------------*
+* Change Log:                                                          *
+* ---------------------------------------------------------------------*
+* Who      |    NAME   |  Date       |    CR       |      Text         *
+* AMIREHA1   A.Harshitha  18.Feb.2025   1100250995  Initial Development*
+* GADERA1    Rambabu Gade 24-Jun-2025   1100271899  Consider Pricing   *
+*                                                   date instead bill- *
+*                                                   -ing date.         *
+* KUMMARA3  Ravi Kummara  12-Jul-2025   1100271836  Contract price look*
+*                                                  up not happening for*
+*----------------------------------------------------------------------*
+
+  CONSTANTS: lc_repid  TYPE progname VALUE 'ZCOMV_CONTRACT_PRICE_RV64A924',
+             lc_vkaus  TYPE zconst   VALUE 'VKAUS',
+             lc_kschl  TYPE zconst   VALUE 'KSCHL',
+             lc_auartr TYPE zconst   VALUE 'AUART_REV',
+             lc_auartc TYPE zconst   VALUE 'AUART_CRD',
+             lc_hyphen TYPE char1    VALUE '-',
+             lc_i      TYPE char1    VALUE 'I',
+             lc_vbak   TYPE char30   VALUE '(SAPMV45A)VBAK',
+             lc_vbap   TYPE char30   VALUE '(SAPMV45A)XVBAP[]',
+             lc_eq     TYPE char2    VALUE 'EQ'.
+
+  FIELD-SYMBOLS: <lfs_vbak>  TYPE vbak,
+                 <lfs_xvbap> TYPE va_vbapvb_t.
+
+  DATA: lr_vkaus  TYPE RANGE OF vkaus,
+        lr_auartr TYPE RANGE OF auart,
+        lr_auartc TYPE RANGE OF auart,
+        lv_kschl  TYPE kschl,
+        lt_output TYPE zmm_national_code_details_tt.
+
+  IF is_komk IS NOT INITIAL AND is_komp IS NOT INITIAL.
+
+*--Obtaining the values being maintained in ZCONSTANTS
+    SELECT const, value
+        FROM zconstants
+        INTO TABLE @DATA(lt_const)
+        WHERE repid = @lc_repid
+        ORDER BY const, counter.
+    IF sy-subrc = 0.
+      lr_vkaus = VALUE #( FOR ls_const_value IN lt_const WHERE ( const  = lc_vkaus )
+                                                                 ( sign   = lc_i
+                                                                   option = lc_eq
+                                                                   low    =  ls_const_value-value ) ).
+
+      lv_kschl = VALUE #( lt_const[ const = lc_kschl ]-value OPTIONAL ).
+
+      lr_auartr = VALUE #( FOR ls_const_value IN lt_const WHERE ( const  = lc_auartr )
+                                                                 ( sign   = lc_i
+                                                                   option = lc_eq
+                                                                   low    =  ls_const_value-value ) ).
+
+      lr_auartc = VALUE #( FOR ls_const_value IN lt_const WHERE ( const  = lc_auartc )
+                                                                 ( sign   = lc_i
+                                                                   option = lc_eq
+                                                                   low    =  ls_const_value-value ) ).
+
+      ASSIGN (lc_vbak) TO <lfs_vbak>.
+      IF <lfs_vbak> IS ASSIGNED.
+        IF lr_vkaus IS NOT INITIAL AND lv_kschl IS NOT INITIAL AND lr_auartr IS NOT INITIAL
+          AND lr_auartc IS NOT INITIAL AND is_komk-kunnr IS NOT INITIAL AND is_komp-matnr IS NOT INITIAL
+          AND ( <lfs_vbak>-auart IN lr_auartr OR <lfs_vbak>-auart IN lr_auartc ).
+          "Assign the Pricing date to determine the price
+          IF is_komk-prsdt IS NOT INITIAL.
+            DATA(lv_prcdat) = is_komk-prsdt.
+          ELSE.
+            lv_prcdat = sy-datlo.
+          ENDIF.
+
+          "Get the national code for the material
+          CALL FUNCTION 'ZMM_NATIONAL_CODE'
+            EXPORTING
+              iv_material_no          = is_komp-matnr
+              iv_sales_org            = is_komk-vkorg
+              iv_distr_chnl           = is_komk-vtweg
+            IMPORTING
+              et_output               = lt_output
+            EXCEPTIONS
+              mandatory_input_missing = 1
+              OTHERS                  = 2.
+          IF sy-subrc = 0 AND lt_output IS NOT INITIAL.
+            DATA(lv_ncode) = VALUE #( lt_output[ 1 ]-national_code OPTIONAL ).
+            IF lv_ncode IS NOT INITIAL.
+              REPLACE ALL OCCURRENCES OF lc_hyphen IN lv_ncode WITH ''.
+              SELECT a~contract_id, b~cont_prod_prc
+                INTO TABLE @DATA(lt_custprod)
+                FROM zcomv_hca_ctcust AS a
+                INNER JOIN zcomv_hca_ctprod AS b
+                ON    a~contract_id = b~contract_id
+                WHERE a~cust_nmbr = @is_komk-kunnr
+                AND   a~cont_mbr_eff_dat <= @lv_prcdat
+                AND   a~cont_mbr_exp_dat >= @lv_prcdat
+                AND   b~ndc_10 = @lv_ncode
+                AND   b~cont_prc_eff_dat <= @lv_prcdat
+                AND   b~cont_prc_exp_dat >= @lv_prcdat
+                ORDER BY a~contract_id.
+              IF sy-subrc NE 0.
+                ASSIGN (lc_vbap) TO <lfs_xvbap>.
+                IF <lfs_xvbap> IS ASSIGNED.
+                  CLEAR: <lfs_xvbap>[ posnr = t_komv-kposn ]-zcomv_contractno, t_komv-kbetr, c_xkwert.
+                ENDIF.
+                RETURN.
+              ELSE.
+                DATA(lv_contr_found) = lines( lt_custprod ).
+                IF lv_contr_found LE 1.                 "Single Contract found
+                  DATA(ls_prod_prc) = VALUE #( lt_custprod[ 1 ] OPTIONAL ).
+                  IF ls_prod_prc IS NOT INITIAL.
+                    t_komv-kbetr = ls_prod_prc-cont_prod_prc.
+                    c_xkwert = t_komv-kbetr * is_komp-mglme.
+                    ASSIGN (lc_vbap) TO <lfs_xvbap>.
+                    IF <lfs_xvbap> IS ASSIGNED.
+                      <lfs_xvbap>[ posnr = t_komv-kposn ]-zcomv_contractno = ls_prod_prc-contract_id.
+                    ENDIF.
+                  ENDIF.
+                ELSE.                                   "Multiple contracts found
+                  IF <lfs_vbak>-auart IN lr_auartr.        "Revenue orders
+                    SORT lt_custprod BY cont_prod_prc ASCENDING.
+                    ls_prod_prc = VALUE #( lt_custprod[ 1 ] OPTIONAL ).
+                    IF ls_prod_prc IS NOT INITIAL.
+                      t_komv-kbetr = ls_prod_prc-cont_prod_prc.
+                      c_xkwert = t_komv-kbetr * is_komp-mglme.
+                    ENDIF.
+                    ASSIGN (lc_vbap) TO <lfs_xvbap>.
+                    IF <lfs_xvbap> IS ASSIGNED.
+                      <lfs_xvbap>[ posnr = t_komv-kposn ]-zcomv_contractno = ls_prod_prc-contract_id.
+                    ENDIF.
+                  ELSEIF <lfs_vbak>-auart IN lr_auartc.    "Credit Memo/Return orders
+                    SORT lt_custprod BY cont_prod_prc DESCENDING.
+                    ls_prod_prc = VALUE #( lt_custprod[ 1 ] OPTIONAL ).
+                    IF ls_prod_prc IS NOT INITIAL.
+                      t_komv-kbetr = ls_prod_prc-cont_prod_prc.
+                      c_xkwert = t_komv-kbetr * is_komp-mglme.
+                    ENDIF.
+                    ASSIGN (lc_vbap) TO <lfs_xvbap>.
+                    IF <lfs_xvbap> IS ASSIGNED.
+                      <lfs_xvbap>[ posnr = t_komv-kposn ]-zcomv_contractno = ls_prod_prc-contract_id.
+                    ENDIF.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+ENDFUNCTION.
+
+ENDFUNCTION.
