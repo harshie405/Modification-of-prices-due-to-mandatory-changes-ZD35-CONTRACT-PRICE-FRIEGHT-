@@ -1,0 +1,429 @@
+#INCLUDE-1
+CONSTANTS: lc_vkorg1 TYPE zexitkey  VALUE 'VKORG',
+           lc_vtweg1 TYPE zexitkey  VALUE 'VTWEG',
+           lc_pltyp  TYPE zexitkey  VALUE 'PLTYP',
+           lc_prog   TYPE sobj_name VALUE 'ZCOMV_THRESHOLD_RET_POL'.
+
+DATA: lt_fname TYPE fbname.
+
+CLEAR: lt_fname[].
+
+CALL FUNCTION 'ZEXIT_CHECK'
+  EXPORTING
+    p_include   = lc_prog
+    p_key1      = lc_vkorg1
+    p_key2      = lc_vtweg1
+    p_key3      = lc_pltyp
+    p_val1      = tkomk-vkorg
+    p_val2      = tkomk-vtweg
+    p_val3      = tkomk-pltyp
+  CHANGING
+    func_module = lt_fname
+  EXCEPTIONS
+    not_active  = 1
+    OTHERS      = 2.
+
+IF sy-subrc EQ 0.
+
+  LOOP AT lt_fname ASSIGNING FIELD-SYMBOL(<lfs_fm1>).
+    CALL FUNCTION <lfs_fm1>
+      EXPORTING
+        i_komk = tkomk
+        i_komp = tkomp
+        i_vbak = vbak
+        c_vbap = vbap
+      TABLES
+        t_vbap = xvbap
+        t_komv = xkomv.
+  ENDLOOP.
+ENDIF.
+
+#INCLUDE-2
+*&---------------------------------------------------------------------*
+*& Include ZCOMV_CMR_REJ_REASON
+*&---------------------------------------------------------------------*
+*& Development ID:  ZDDE-00064252                                      *
+*& Functional Spec: ZFSE-00064251                                      *
+*&---------------------------------------------------------------------*
+*& Description :                                                       *
+*& This program reuses the user exit framework for customized          *
+*& execution of function modules specified in table ZEXIT_CHECK for    *
+*& BAdI: MSR_SD_SALES                                                  *
+*& Enh Implementation : ZCOMV_ENH_REJ_REASON                           *
+*& Exit include  ZCOMV_CMR_REJ_REASON                                  *
+*& Rejection reason CMR_ABGRU updation                                 *
+*&---------------------------------------------------------------------*
+*& Change Log:                                                         *
+*&---------------------------------------------------------------------*
+*& Init        |     Name        |     Date   |            Text        *
+*&---------------------------------------------------------------------*
+*& AMIREHA1     Harshitha A       13-Sep-2024        CR: 1100236155    *
+*&---------------------------------------------------------------------*
+DATA: lt_fun_rej  TYPE fbname.
+
+CONSTANTS:lc_inc_rej  TYPE char40 VALUE 'ZCOMV_CMR_REJ_REASON',
+          lc_key1_rej TYPE char30 VALUE 'VKORG/VTWEG/SPART',
+          lc_key2_rej TYPE char30 VALUE 'AUART/AUGRU'.
+
+*--- User Exit Check ---
+DATA(lv_key1_rej) = |{ is_vbak-vkorg }{ lc_slash_ret }{ is_vbak-vtweg }{ lc_slash_ret }{ is_vbak-spart }|.
+DATA(lv_key2_rej) = |{ is_vbak-auart }{ lc_slash_ret }{ is_vbak-augru }|.
+
+CALL FUNCTION 'ZEXIT_CHECK'
+  EXPORTING
+    p_include   = lc_inc_rej
+    p_key1      = lc_key1_rej
+    p_key2      = lc_key2_rej
+    p_val1      = lv_key1_rej
+    p_val2      = lv_key2_rej
+  CHANGING
+    func_module = lt_fun_rej
+  EXCEPTIONS
+    not_active  = 1
+    OTHERS      = 2.
+
+IF sy-subrc EQ 0. " Exit is active
+
+  LOOP AT lt_fun_rej ASSIGNING FIELD-SYMBOL(<fs_fun_rej>).
+    CALL FUNCTION <fs_fun_rej>
+      EXPORTING
+        is_vbak             = is_vbak
+        is_vbap             = is_vbap
+*       i_komk              = komk
+      CHANGING
+        cs_msr_sales_item   = cs_msr_sales_item
+        cv_msr_ret_reason   = cv_msr_ret_reason
+        cv_msr_refund_code  = cv_msr_refund_code
+        cv_msr_approv_block = cv_msr_approv_block
+        ct_next_plants      = ct_next_plants.
+
+  ENDLOOP.
+
+ENDIF.
+
+#FUNCTION MODULES-1
+FUNCTION zcomv_thrshld_ret_pol .
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(I_KOMK) TYPE  KOMK
+*"     REFERENCE(I_KOMP) TYPE  KOMP
+*"     REFERENCE(I_VBAK) TYPE  VBAK
+*"     REFERENCE(C_VBAP) TYPE  VBAP
+*"  TABLES
+*"      T_VBAP STRUCTURE  VBAP
+*"      T_KOMV STRUCTURE  KOMV
+*"      T_KOMP STRUCTURE  KOMP OPTIONAL
+*"----------------------------------------------------------------------
+*&---------------------------------------------------------------------*
+*& Development ID:  ZDDE-00064252                                      *
+*& Functional Spec: ZFSE-00064251                                      *
+*&---------------------------------------------------------------------*
+*& Title : Apply Returns Based On The Threshold                        *
+*& This FM triggers from the include ZCOMV_THRESHOLD_RET_POL via       *
+*& USEREXIT_PRICING_PREPARE_TKOMP. This will append ZD35 to the line   *
+*& items and adds rejection reason if it is below threshold.           *
+*&---------------------------------------------------------------------*
+*& Change Log:                                                         *
+*&---------------------------------------------------------------------*
+*& Init     |  Name     |     Date   |            Text                 *
+*&---------------------------------------------------------------------*
+*& AMIREHA1 A.HARSHITHA  06-Sep-2024   CR: 1100236155  Initial version *
+*&---------------------------------------------------------------------*
+*& AMIREHA1 A.HARSHITH   02-Dec-2024   CR:1100259353                   *
+*&                                     Called FM ZCOMV_ZD35_THRSHLD to *
+*&                                     calculate the kwert values from *
+*&                                     USEREXIT_PRICING_PREPARE_TKOMP  *
+*&RAZAAS6   Asad Raza    19-Jan-2025   CR:1100262522 Changes for Dupli-*
+*&                                     cate Pricing issues             *
+*&---------------------------------------------------------------------*
+  CONSTANTS: lc_repid  TYPE progname VALUE 'ZCOMV_THRSHLD_RET_POL',
+             lc_const1 TYPE zconst   VALUE 'VBTYP',
+             lc_const  TYPE zconst   VALUE 'AUGRU',
+             lc_kschl  TYPE zconst   VALUE 'KSCHL',
+             lc_auart  TYPE auart    VALUE 'ZCRA',
+             lc_i(1)   TYPE c VALUE 'I',
+             lc_eq(2)  TYPE c VALUE 'EQ'.
+
+  DATA: lv_kschl     TYPE kschl,
+        lr_augru     TYPE RANGE OF augru,
+        lt_komv_temp TYPE TABLE OF komv.
+
+  CLEAR: lv_kschl.
+
+  SELECT const,
+         value
+    FROM zconstants
+   WHERE repid = @lc_repid
+   ORDER BY const,value
+    INTO TABLE @DATA(lt_const).
+  IF sy-subrc EQ 0.
+    lr_augru = VALUE #( FOR <fs> IN lt_const
+                WHERE ( const = lc_const )
+                  LET s = lc_i o = lc_eq
+                   IN sign   = s option = o
+                    ( low = <fs>-value ) ).
+    lv_kschl = VALUE #( lt_const[ const = lc_kschl ]-value OPTIONAL ).
+
+    IF line_exists( lt_const[ const = lc_const1 value = i_komk-vbtyp ] ).
+      "if ZD35 is already available then check the threshold and apply rejection reason
+      IF line_exists( t_komv[ kschl = lv_kschl kposn = t_vbap-posnr ] ).
+        DATA(lv_order_reason) = abap_true.
+      ELSE.
+        IF i_vbak-auart NE lc_auart.
+          IF lv_kschl IS NOT INITIAL AND t_vbap-posnr IS NOT INITIAL AND i_vbak-augru IN lr_augru.
+            lt_komv_temp[] = t_komv[].
+            DELETE lt_komv_temp WHERE kposn > c_vbap-posnr.
+            IF lt_komv_temp IS NOT INITIAL.
+              DATA(lv_index) =  lines( lt_komv_temp ).
+              lv_index = lv_index + 1.
+              DATA(ls_komv) = lt_komv_temp[ 1 ].
+              INSERT VALUE #( kschl = lv_kschl kposn = t_vbap-posnr zaehk = ls_komv-zaehk
+                             ) INTO t_komv INDEX lv_index.
+              lv_order_reason = abap_true.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF lv_order_reason = abap_true.
+        CALL FUNCTION 'ZCOMV_ZD35_THRSHLD'
+          EXPORTING
+            i_komk  = i_komk
+            is_komp = i_komp
+          TABLES
+            t_komv  = t_komv.
+        zcomv_cl_threshold_calcpricing=>get_instance( )->update_pltyp( EXPORTING i_pltyp = i_komk-pltyp ).
+        IF line_exists( lt_const[ const = lc_const value = i_komk-augru ] ).
+        ELSE.
+          IF i_komk-augru IS NOT INITIAL.
+            LOOP AT t_vbap ASSIGNING FIELD-SYMBOL(<lfs_vbap1>).
+              IF line_exists( lt_const[ const = lc_const value = i_komk-augru ] ).
+                EXIT.
+              ELSE.
+                DELETE t_komv[] WHERE kschl = lv_kschl AND kposn = <lfs_vbap1>-posnr.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDFUNCTION.
+
+#FUNCTION MODULES-2
+
+FUNCTION zcomv_zd35_thrshld .
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(I_KOMK) TYPE  KOMK
+*"     REFERENCE(IS_KOMP) TYPE  KOMP OPTIONAL
+*"  TABLES
+*"      T_KOMV STRUCTURE  KOMV OPTIONAL
+*"----------------------------------------------------------------------
+*&---------------------------------------------------------------------*
+*& Development ID:  ZDDE-00064252                                      *
+*& Functional Spec: ZFSE-00064251                                      *
+*&---------------------------------------------------------------------*
+*& Title : Apply Returns Based On The Threshold                        *
+*& This FM triggers from the include ZCOMV_THRESHOLD_RET_POL via       *
+*& USEREXIT_PRICING_PREPARE_TKOMP From Function module ZCOMV_THRSHLD_  *
+*& RET_POL to calculate the kwert values after appending ZD35          *
+*&---------------------------------------------------------------------*
+*& Change Log:                                                         *
+*&---------------------------------------------------------------------*
+*& Init     |  Name     |     Date   |            Text                 *
+*&---------------------------------------------------------------------*
+*& AMIREHA1 A.HARSHITHA  06-Sep-2024 CR: 1100236155  Initial version   *
+*&---------------------------------------------------------------------*
+*& AMIREHA1 A.HARSHITHA  02-Dec-2024 CR: 1100259353                    *
+*&                                       Added logic in method         *
+*&                                       UPDATE_KOMV to append the     *
+*&                                       latest kwert values into      *
+*&                                       the table for CMR rejection   *
+*&                                       Application                   *
+*&RAZAAS6   Asad Raza   19-Jan-2025 CR: 1100262522 Changes for Dupli- *
+*&                                       cate Pricing issues           *
+*&---------------------------------------------------------------------*
+  CONSTANTS: lc_repid   TYPE progname VALUE 'ZCOMV_ZD35_THRSHLD',
+             lc_const   TYPE zconst   VALUE 'AUGRU',
+             lc_kschl   TYPE zconst   VALUE 'KSCHL',
+             lc_percent TYPE char1    VALUE '%',
+             lc_pltyp   TYPE zconst   VALUE 'PLTYP_',
+             lc_const1  TYPE zconst   VALUE 'VBTYP'.
+
+  DATA: lv_pltyp           TYPE zconst,
+        lv_kschl_zd35      TYPE kschl,
+        lv_plt             TYPE zconst,
+        lv_threshold_kwert TYPE kwert.
+
+  CLEAR:  lv_pltyp, lv_kschl_zd35.
+
+  SELECT const,
+         value
+    FROM zconstants
+    INTO TABLE @DATA(lt_const)
+    WHERE repid = @lc_repid
+    ORDER BY const, value.
+  IF sy-subrc EQ 0.
+    lv_kschl_zd35 = VALUE #( lt_const[ const = lc_kschl ]-value OPTIONAL ).
+    lv_plt = |{ lc_pltyp }| & |{ i_komk-pltyp }|.
+    DATA(lv_threshold_value) = VALUE #( lt_const[ const = lv_plt ]-value OPTIONAL ).
+    lv_threshold_kwert = lv_threshold_value.
+    DATA(lt_komv) = t_komv[].
+    DATA(lt_komv_tmp) = t_komv[].
+    DELETE lt_komv_tmp WHERE kposn NE is_komp-kposn.
+    IF lt_komv_tmp IS NOT INITIAL.
+      DATA(ls_komv) = lt_komv_tmp[ 1 ].
+    ENDIF.
+    lv_pltyp = |{ lc_pltyp }| & |{ i_komk-pltyp }| & |{ lc_percent }|. "get the pricelist type
+    IF line_exists( lt_const[ const = lc_const1 value = i_komk-vbtyp ] ). "check Document type
+      IF line_exists( lt_const[ const = lc_const value = i_komk-augru ] ). "check order reason
+        LOOP AT lt_komv ASSIGNING FIELD-SYMBOL(<ls_komv>) WHERE kschl EQ lv_kschl_zd35 AND kposn = is_komp-kposn.
+          "fetch condition amount from constant table
+          IF is_komp-netwr IS NOT INITIAL AND <ls_komv>-kwert IS INITIAL.
+            <ls_komv>-knumv = i_komk-knumv.
+            <ls_komv>-kappl = i_komk-kappl.
+            <ls_komv>-kbetr = VALUE #( lt_const[ const = lv_pltyp ]-value OPTIONAL ) * -1 * 10.
+            <ls_komv>-kwert = is_komp-netwr * <ls_komv>-kbetr / 1000. "calulated condition value
+            <ls_komv>-kawrt = ls_komv-kawrt.
+            <ls_komv>-kmxwr = abap_true.
+          ENDIF.
+        ENDLOOP.
+        IF lt_komv IS NOT INITIAL.
+          CLEAR:t_komv[].
+          t_komv[] = lt_komv.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    DATA(ls_komv_1) = VALUE #( t_komv[ kschl = lv_kschl_zd35 kposn = is_komp-kposn ] OPTIONAL ).
+    IF ls_komv_1-kwert IS NOT INITIAL.
+      zcomv_cl_threshold_calcpricing=>get_instance( )->update_komv( EXPORTING  lv_threshold_val = lv_threshold_kwert  is_komv = ls_komv_1 iv_kschl = lv_kschl_zd35 ).
+    ENDIF.
+    CLEAR lv_kschl_zd35.
+  ENDIF.
+
+ENDFUNCTION.
+
+#FUNCTION MODULES-3
+
+FUNCTION zcomv_threshold_update.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(I_IDOC_NO) TYPE  EDI_DOCNUM
+*"  TABLES
+*"      T_VBRP TYPE  STANDARD TABLE
+*"      T_VVBRP TYPE  STANDARD TABLE
+*"----------------------------------------------------------------------
+*& Development ID:  ZDDE-00064252                                        *
+*& Development ID:  ZFSE-00064251                                        *
+*& Exit:USEREXIT_MOVE_FIELD_TO_VBAP                                      *
+*& Enhancement Implementation: ZCOMV_MV45AFZZ_QUANT_UPDATE               *
+*& Exit include  ZCOMV_MV45AFZZ_QUANT_UPDATE                             *
+*& Description: This FM updates qty based on idoc number                 *
+*&-----------------------------------------------------------------------*                                                                      *
+*&-----------------------------------------------------------------------*
+*& Change Log:                                                           *
+*&                                                                       *
+*&  Who               Date          Text                                 *
+*& AMIREHA1       02-Dec-2024     1100236155  Initial Version            *
+*------------------------------------------------------------------------*
+
+  CONSTANTS: lc_e1edp01 TYPE edi_segnam VALUE 'E1EDP01'.
+
+  TYPES:   BEGIN OF ty_cvbrp.
+             INCLUDE TYPE vbrpvb.
+  TYPES:     pstyn TYPE pstyv,
+             rkbel TYPE vbeln_vf,
+             rkpos TYPE posnr_vf,
+             pctrf TYPE pctrf,
+           END OF ty_cvbrp.
+
+  FIELD-SYMBOLS: <lfs_vbrp>  TYPE ty_cvbrp,
+                 <lfs_vvbrp> TYPE vbrpvb.
+
+  DATA: ls_e1edp01 TYPE e1edp01.
+
+  SELECT docnum,
+         counter,
+         segnum,
+         segnam,
+         psgnum,
+         hlevel,
+         _dataaging,
+         dtint2,
+         sdata
+    FROM edid4
+    INTO TABLE @DATA(lt_edid4)
+    WHERE docnum = @i_idoc_no
+      AND segnam = @lc_e1edp01
+    ORDER BY PRIMARY KEY.
+  IF sy-subrc EQ 0.
+    LOOP AT lt_edid4 ASSIGNING FIELD-SYMBOL(<ls_edid4>).
+      ASSIGN t_vbrp TO <lfs_vbrp>.
+      ASSIGN t_vvbrp TO <lfs_vvbrp>.
+      IF <lfs_vbrp> IS ASSIGNED AND <lfs_vvbrp> IS ASSIGNED.
+        ls_e1edp01 = <ls_edid4>-sdata.
+        IF ls_e1edp01-posex = <lfs_vbrp>-posnr.
+          IF  <lfs_vbrp> IS NOT INITIAL.
+            <lfs_vbrp>-fkimg = ls_e1edp01-menge.
+          ENDIF.
+          IF <lfs_vvbrp> IS NOT INITIAL.
+            <lfs_vvbrp>-fkimg = ls_e1edp01-menge.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+ENDFUNCTION.
+
+#FUNCTION MODULES-4
+
+FUNCTION zcomv_cmr_rej_upd.
+*"-----------------------------------------------------------------------*
+*"*"Local Interface:                                                     *
+*"  IMPORTING                                                            *
+*"     REFERENCE(IS_VBAK) TYPE  VBAK                                     *
+*"  CHANGING                                                             *
+*"     REFERENCE(CS_MSR_SALES_ITEM) TYPE  MSR_S_SALES_ITEM               *
+*"     REFERENCE(CV_MSR_RET_REASON) TYPE  MSR_RETURNS_REASON OPTIONAL    *
+*"     REFERENCE(CV_MSR_REFUND_CODE) TYPE  MSR_RETURNS_REFUND_CODE       *
+*"     REFERENCE(CV_MSR_APPROV_BLOCK) TYPE  MSR_APPROVAL_BLOCK OPTIONAL  *
+*"     REFERENCE(CT_NEXT_PLANTS) TYPE  MSR_T_NEXT_PLANTS OPTIONAL        *
+*"-----------------------------------------------------------------------*
+*& Development ID:  ZDDE-00064252                                        *
+*& Development ID:  ZFSE-00064251                                        *
+*& BAdI: MSR_SD_SALES                                                    *
+*& Implementation class: ZCOMV_CL_THRESHOLD_CALCPRICING                  *
+*& Enhancement Implementation: ZCOMV_CHANGE_CMR_REJREASON                *
+*& Exit include  zcomv_change_cmr_rejreason                              *
+*& Exit Framework : with Include name zcomv_change_cmr_rejreason         *
+*& Description: This FM updates Rejection reason Based on  CMR_ABGRU upd *
+*&-----------------------------------------------------------------------*                                                                      *
+*&-----------------------------------------------------------------------*
+*& Change Log:                                                           *
+*&                                                                       *
+*&  Who           Date            CR             Text                    *
+*& AMIREHA1      11-Sep-2024    1100236155     Initial Version           *
+*------------------------------------------------------------------------*
+  CONSTANTS: lc_repid  TYPE progname VALUE 'ZCOMV_ZD35_THRSHLD',
+             lc_const  TYPE zconst   VALUE 'AUGRU',
+             lc_const1 TYPE zconst   VALUE 'VBTYP'.
+
+  SELECT const,
+         value
+    FROM zconstants
+    INTO TABLE @DATA(lt_const)
+    WHERE repid = @lc_repid
+    ORDER BY const, value.
+  IF sy-subrc EQ 0.
+    IF line_exists( lt_const[ const = lc_const1 value = is_vbak-vbtyp ] ). "check Document type
+      IF line_exists( lt_const[ const = lc_const value = is_vbak-augru ] ). "check order reason
+        zcomv_cl_threshold_calcpricing=>get_instance( )->set_cmr_rejreason( EXPORTING  is_vbak = is_vbak  CHANGING cs_msr_sales_item = cs_msr_sales_item ).
+      ENDIF.
+    ENDIF.
+  ENDIF.
+ENDFUNCTION.
